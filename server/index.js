@@ -24,67 +24,90 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "50kb" }));
 
-let infisicalClient;
+let smtpConfig;
 
-function getInfisicalClient() {
-  if (!infisicalClient) {
-    if (!process.env.INFISICAL_CLIENT_ID || !process.env.INFISICAL_CLIENT_SECRET || !process.env.INFISICAL_PROJECT_ID) {
-      throw new Error("Infisical configuration is missing.");
+async function loadSmtpConfig() {
+  const required = [
+    "INFISICAL_CLIENT_ID",
+    "INFISICAL_CLIENT_SECRET",
+    "INFISICAL_PROJECT_ID"
+  ];
+
+  for (const name of required) {
+    if (!process.env[name]) {
+      throw new Error(`Missing required environment variable: ${name}`);
     }
-
-    infisicalClient = new InfisicalSDK({
-      siteUrl: process.env.INFISICAL_SITE_URL || "https://app.infisical.com"
-    });
   }
 
-  return infisicalClient;
-}
+  const client = new InfisicalSDK({
+    siteUrl: process.env.INFISICAL_SITE_URL || "https://app.infisical.com"
+  });
 
-async function getSecret(secretName) {
-  const client = getInfisicalClient();
+  console.log("Authenticating with Infisical...");
 
   await client.auth().universalAuth.login({
     clientId: process.env.INFISICAL_CLIENT_ID,
     clientSecret: process.env.INFISICAL_CLIENT_SECRET
   });
 
-  const secret = await client.secrets().getSecret({
+  console.log("Infisical authentication successful.");
+
+  const result = await client.secrets().listSecrets({
     environment: process.env.INFISICAL_ENVIRONMENT || "prod",
     projectId: process.env.INFISICAL_PROJECT_ID,
-    secretName,
-    secretPath: process.env.INFISICAL_SECRET_PATH || "/"
+    secretPath: process.env.INFISICAL_SECRET_PATH || "/",
+    viewSecretValue: true,
+    recursive: false
   });
 
-  if (!secret?.secretValue) {
-    throw new Error(`Infisical secret "${secretName}" was empty or unavailable.`);
+  const secrets = result?.secrets || [];
+
+  const values = Object.fromEntries(
+    secrets.map(secret => [secret.secretKey || secret.key, secret.secretValue])
+  );
+
+  const missing = ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASS"]
+    .filter(name => !values[name]);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing Infisical secrets: ${missing.join(", ")}`);
   }
 
-  return secret.secretValue;
+  smtpConfig = {
+    host: values.SMTP_HOST,
+    port: Number(values.SMTP_PORT),
+    secure: String(values.SMTP_SECURE) === "true",
+    auth: {
+      user: values.SMTP_USER,
+      pass: values.SMTP_PASS
+    },
+    from: process.env.MAIL_FROM || values.SMTP_USER
+  };
+
+  console.log("SMTP configuration loaded from Infisical.");
 }
 
-async function createTransporter() {
-  const smtpHost = await getSecret("SMTP_HOST");
-  const smtpPort = await getSecret("SMTP_PORT");
-  const smtpSecure = await getSecret("SMTP_SECURE");
-  const smtpUser = await getSecret("SMTP_USER");
-  const smtpPass = await getSecret("SMTP_PASS");
-  const mailFrom = process.env.MAIL_FROM || smtpUser;
+function createTransporter() {
+  if (!smtpConfig) {
+    throw new Error("SMTP configuration is not loaded.");
+  }
 
   return nodemailer.createTransport({
-    host: smtpHost,
-    port: Number(smtpPort),
-    secure: String(smtpSecure) === "true",
-    auth: {
-      user: smtpUser,
-      pass: smtpPass
-    },
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: smtpConfig.secure,
+    auth: smtpConfig.auth,
     disableFileAccess: true,
     disableUrlAccess: true
   });
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "astro-consultancy-api" });
+  res.json({
+    ok: true,
+    service: "astro-consultancy-api",
+    emailConfigured: Boolean(smtpConfig)
+  });
 });
 
 app.post("/api/bookings", async (req, res) => {
@@ -102,7 +125,7 @@ app.post("/api/bookings", async (req, res) => {
   }
 
   try {
-    const transporter = await createTransporter();
+    const transporter = createTransporter();
 
     const details = [
       `Name: ${name}`,
@@ -114,8 +137,10 @@ app.post("/api/bookings", async (req, res) => {
       `Question: ${question || "Not provided"}`
     ].join("\n");
 
+    console.log(`Sending booking email for ${email}...`);
+
     await transporter.sendMail({
-      from: process.env.MAIL_FROM || (await getSecret("SMTP_USER")),
+      from: smtpConfig.from,
       to: consultantEmail,
       replyTo: email,
       subject: `New astrology consultation booking — ${name}`,
@@ -123,11 +148,13 @@ app.post("/api/bookings", async (req, res) => {
     });
 
     await transporter.sendMail({
-      from: process.env.MAIL_FROM || (await getSecret("SMTP_USER")),
+      from: smtpConfig.from,
       to: email,
       subject: "Astro Consultancy — booking request received",
       text: `Hi ${name},\n\nThank you for requesting an astrology consultation. We have received your booking request.\n\nService: ${service}\nRequested time: ${dateTime}\n\nThe consultation details will be confirmed separately.\n\nAstro Consultancy`
     });
+
+    console.log(`Booking emails sent successfully for ${email}.`);
 
     return res.status(201).json({
       ok: true,
@@ -141,6 +168,12 @@ app.post("/api/bookings", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Astro Consultancy API listening on port ${port}`);
-});
+try {
+  await loadSmtpConfig();
+  app.listen(port, () => {
+    console.log(`Astro Consultancy API listening on port ${port}`);
+  });
+} catch (error) {
+  console.error("Startup configuration failed:", error.message);
+  process.exit(1);
+}
