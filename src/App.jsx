@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import emailjs from "@emailjs/browser";
 
 const SCHEDULE = {
   timezone: "Asia/Kolkata",
@@ -10,7 +11,13 @@ const SCHEDULE = {
   bookedSlots: []
 };
 
-const CONSULTANCY_WHATSAPP = "917347879744";
+const EMAIL_CONFIG = {
+  publicKey: "YOUR_EMAILJS_PUBLIC_KEY",
+  serviceId: "YOUR_EMAILJS_SERVICE_ID",
+  bookingTemplateId: "YOUR_BOOKING_TEMPLATE_ID",
+  confirmationTemplateId: "YOUR_CONFIRMATION_TEMPLATE_ID",
+  consultancyEmail: "iaastrophilee@gmail.com"
+};
 
 const SERVICES = [
   { name: "Personal Consultation", duration: 60, price: "₹1,500", icon: "☾", description: "Discuss your most important questions with a focused reading based on your birth details." },
@@ -61,7 +68,7 @@ function App() {
     document.getElementById("booking")?.scrollIntoView({ behavior: "smooth" });
   }
 
-  function book() {
+  async function book() {
     const name = document.getElementById("name").value.trim();
     const phone = document.getElementById("phone").value.trim();
     const email = document.getElementById("email").value.trim();
@@ -73,21 +80,45 @@ function App() {
       return;
     }
 
-    const text = [
-      "Hello, I would like to book an astrology consultation.",
-      `Service: ${service}`,
-      `Date & time: ${summary}`,
-      `Name: ${name}`,
-      `Phone: ${phone}`,
-      `Email: ${email}`,
-      birth ? `Birth details: ${birth}` : null,
-      question ? `Question/topic: ${question}` : null
-    ].filter(Boolean).join("\n");
+    if (EMAIL_CONFIG.publicKey.startsWith("YOUR_") || EMAIL_CONFIG.serviceId.startsWith("YOUR_")) {
+      setMessage("Email booking is not configured yet. Add the EmailJS keys in src/App.jsx.");
+      return;
+    }
 
-    window.open(`https://wa.me/${CONSULTANCY_WHATSAPP}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
-    setMessage("Your booking request has been prepared. Complete the WhatsApp message to confirm the appointment.");
+    setMessage("Sending your booking request...");
+
+    const templateParams = {
+      name,
+      email,
+      phone,
+      service,
+      date_time: summary,
+      birth_details: birth || "Not provided",
+      question: question || "Not provided",
+      consultancy_email: EMAIL_CONFIG.consultancyEmail
+    };
+
+    try {
+      emailjs.init({ publicKey: EMAIL_CONFIG.publicKey });
+
+      await emailjs.send(
+        EMAIL_CONFIG.serviceId,
+        EMAIL_CONFIG.bookingTemplateId,
+        templateParams
+      );
+
+      await emailjs.send(
+        EMAIL_CONFIG.serviceId,
+        EMAIL_CONFIG.confirmationTemplateId,
+        templateParams
+      );
+
+      setMessage("Booking request sent successfully. A confirmation email has been sent to your email address.");
+    } catch (error) {
+      console.error("Email booking failed:", error);
+      setMessage("We couldn't send the booking email. Please try again in a moment.");
+    }
   }
-
   return (
     <>
       <header className="site-header">
@@ -133,7 +164,7 @@ function App() {
             <div className="booking-step"><span>2</span><div><label>Date</label><div className="date-grid">{dates.map(({d,date,available}) => <button key={date} type="button" disabled={!available} className={`date-btn ${!available ? "disabled" : ""} ${selectedDate === date ? "selected" : ""}`} onClick={() => {setSelectedDate(date);setSelectedTime("");}}><small>{d.toLocaleDateString("en-IN",{weekday:"short"})}</small><strong>{d.getDate()}</strong></button>)}</div></div></div>
             <div className="booking-step"><span>3</span><div><label>Available time</label><div className="time-grid">{!selectedDate ? <p className="empty-state">Choose a date first.</p> : times.length ? times.map(t=><button key={t.key} type="button" className={`time-btn ${selectedTime === t.key ? "selected" : ""}`} onClick={()=>setSelectedTime(t.key)}>{t.label}</button>) : <p className="empty-state">No slots are available for this date.</p>}</div></div></div>
             <div className="booking-step"><span>4</span><div><label>Your details</label><div className="form-grid"><input id="name" placeholder="Full name" autoComplete="name"/><input id="phone" type="tel" placeholder="Phone / WhatsApp number" autoComplete="tel"/><input id="email" type="email" placeholder="Email address" autoComplete="email"/><input id="birth" placeholder="Birth date & time (optional)"/></div><textarea id="question" rows="3" placeholder="What would you like guidance on?"/></div></div>
-            <div className="booking-summary"><div><span>Selected</span><strong>{summary}</strong></div><button className="button primary" disabled={!selectedDate || !selectedTime} onClick={book}>Request Booking</button></div>
+            <div className="booking-summary"><div><span>Selected</span><strong>{summary}</strong></div><button className="button primary" disabled={!selectedDate || !selectedTime} onClick={book}>Send Booking Request</button></div>
             <p className="booking-message" role="status">{message}</p>
           </div>
         </section>
