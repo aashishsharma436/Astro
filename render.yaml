@@ -11,15 +11,17 @@ services:
         sync: false
       - key: CONSULTANT_EMAIL
         value: iaastrophilee@gmail.com
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: 465
-      - key: SMTP_SECURE
-        value: "true"
-      - key: SMTP_USER
+      - key: INFISICAL_SITE_URL
+        value: https://app.infisical.com
+      - key: INFISICAL_CLIENT_ID
         sync: false
-      - key: SMTP_PASS
+      - key: INFISICAL_CLIENT_SECRET
         sync: false
+      - key: INFISICAL_PROJECT_ID
+        sync: false
+      - key: INFISICAL_ENVIRONMENT
+        value: prod
+      - key: INFISICAL_SECRET_PATH
+        value: /
       - key: MAIL_FROM
-        sync: false
+        value: iaastrophilee@gmail.com
