@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import emailjs from "@emailjs/browser";
 
 const SCHEDULE = {
   timezone: "Asia/Kolkata",
@@ -11,13 +10,7 @@ const SCHEDULE = {
   bookedSlots: []
 };
 
-const EMAIL_CONFIG = {
-  publicKey: "YOUR_EMAILJS_PUBLIC_KEY",
-  serviceId: "YOUR_EMAILJS_SERVICE_ID",
-  bookingTemplateId: "YOUR_BOOKING_TEMPLATE_ID",
-  confirmationTemplateId: "YOUR_CONFIRMATION_TEMPLATE_ID",
-  consultancyEmail: "iaastrophilee@gmail.com"
-};
+const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 const SERVICES = [
   { name: "Personal Consultation", duration: 60, price: "₹1,500", icon: "☾", description: "Discuss your most important questions with a focused reading based on your birth details." },
@@ -80,43 +73,43 @@ function App() {
       return;
     }
 
-    if (EMAIL_CONFIG.publicKey.startsWith("YOUR_") || EMAIL_CONFIG.serviceId.startsWith("YOUR_")) {
-      setMessage("Email booking is not configured yet. Add the EmailJS keys in src/App.jsx.");
+    if (!selectedDate || !selectedTime) {
+      setMessage("Please select an available date and time.");
+      return;
+    }
+
+    if (!API_URL) {
+      setMessage("Booking service is not configured yet. Please try again later.");
       return;
     }
 
     setMessage("Sending your booking request...");
 
-    const templateParams = {
-      name,
-      email,
-      phone,
-      service,
-      date_time: summary,
-      birth_details: birth || "Not provided",
-      question: question || "Not provided",
-      consultancy_email: EMAIL_CONFIG.consultancyEmail
-    };
-
     try {
-      emailjs.init({ publicKey: EMAIL_CONFIG.publicKey });
+      const response = await fetch(API_URL + "/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          phone,
+          email,
+          service,
+          dateTime: summary,
+          birthDetails: birth || "Not provided",
+          question: question || "Not provided"
+        })
+      });
 
-      await emailjs.send(
-        EMAIL_CONFIG.serviceId,
-        EMAIL_CONFIG.bookingTemplateId,
-        templateParams
-      );
+      const data = await response.json().catch(() => ({}));
 
-      await emailjs.send(
-        EMAIL_CONFIG.serviceId,
-        EMAIL_CONFIG.confirmationTemplateId,
-        templateParams
-      );
+      if (!response.ok) {
+        throw new Error(data.message || "Booking request failed.");
+      }
 
-      setMessage("Booking request sent successfully. A confirmation email has been sent to your email address.");
+      setMessage(data.message || "Booking request sent. A confirmation email has been sent to you.");
     } catch (error) {
-      console.error("Email booking failed:", error);
-      setMessage("We couldn't send the booking email. Please try again in a moment.");
+      console.error("Booking request failed:", error);
+      setMessage(error.message || "We couldn't send the booking request. Please try again later.");
     }
   }
   return (
