@@ -10,6 +10,8 @@ const SCHEDULE = {
   bookedSlots: []
 };
 
+const CONSULTANCY_WHATSAPP = "917347879744";
+
 const SERVICES = [
   { name: "Personal Consultation", duration: 60, price: "₹1,500", icon: "☾", description: "Discuss your most important questions with a focused reading based on your birth details." },
   { name: "Detailed Chart Reading", duration: 90, price: "₹2,000", icon: "✦", description: "A longer session for a broader look at your chart, themes, timing and specific concerns." },
@@ -82,8 +84,7 @@ function App() {
       question ? `Question/topic: ${question}` : null
     ].filter(Boolean).join("\n");
 
-    const whatsappNumber = "919999999999";
-    window.open(`https://wa.me/${whatsappNumber}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    window.open(`https://wa.me/${CONSULTANCY_WHATSAPP}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
     setMessage("Your booking request has been prepared. Complete the WhatsApp message to confirm the appointment.");
   }
 
