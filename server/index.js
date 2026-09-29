@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import { InfisicalSDK } from "@infisical/sdk";
 import nodemailer from "nodemailer";
 
 const app = express();
@@ -23,21 +24,62 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "50kb" }));
 
-function createTransporter() {
-  const required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS"];
-  const missing = required.filter(key => !process.env[key]);
-  if (missing.length) {
-    throw new Error(`Missing email configuration: ${missing.join(", ")}`);
+let infisicalClient;
+
+function getInfisicalClient() {
+  if (!infisicalClient) {
+    if (!process.env.INFISICAL_CLIENT_ID || !process.env.INFISICAL_CLIENT_SECRET || !process.env.INFISICAL_PROJECT_ID) {
+      throw new Error("Infisical configuration is missing.");
+    }
+
+    infisicalClient = new InfisicalSDK({
+      siteUrl: process.env.INFISICAL_SITE_URL || "https://app.infisical.com"
+    });
   }
 
+  return infisicalClient;
+}
+
+async function getSecret(secretName) {
+  const client = getInfisicalClient();
+
+  await client.auth().universalAuth.login({
+    clientId: process.env.INFISICAL_CLIENT_ID,
+    clientSecret: process.env.INFISICAL_CLIENT_SECRET
+  });
+
+  const secret = await client.secrets().getSecret({
+    environment: process.env.INFISICAL_ENVIRONMENT || "prod",
+    projectId: process.env.INFISICAL_PROJECT_ID,
+    secretName,
+    secretPath: process.env.INFISICAL_SECRET_PATH || "/"
+  });
+
+  if (!secret?.secretValue) {
+    throw new Error(`Infisical secret "${secretName}" was empty or unavailable.`);
+  }
+
+  return secret.secretValue;
+}
+
+async function createTransporter() {
+  const smtpHost = await getSecret("SMTP_HOST");
+  const smtpPort = await getSecret("SMTP_PORT");
+  const smtpSecure = await getSecret("SMTP_SECURE");
+  const smtpUser = await getSecret("SMTP_USER");
+  const smtpPass = await getSecret("SMTP_PASS");
+  const mailFrom = process.env.MAIL_FROM || smtpUser;
+
   return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: String(process.env.SMTP_SECURE || "false") === "true",
+    host: smtpHost,
+    port: Number(smtpPort),
+    secure: String(smtpSecure) === "true",
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
-    }
+      user: smtpUser,
+      pass: smtpPass
+    },
+    disableFileAccess: true,
+    disableUrlAccess: true
   });
 }
 
@@ -60,7 +102,7 @@ app.post("/api/bookings", async (req, res) => {
   }
 
   try {
-    const transporter = createTransporter();
+    const transporter = await createTransporter();
 
     const details = [
       `Name: ${name}`,
@@ -73,7 +115,7 @@ app.post("/api/bookings", async (req, res) => {
     ].join("\n");
 
     await transporter.sendMail({
-      from: process.env.MAIL_FROM || process.env.SMTP_USER,
+      from: process.env.MAIL_FROM || (await getSecret("SMTP_USER")),
       to: consultantEmail,
       replyTo: email,
       subject: `New astrology consultation booking — ${name}`,
@@ -81,7 +123,7 @@ app.post("/api/bookings", async (req, res) => {
     });
 
     await transporter.sendMail({
-      from: process.env.MAIL_FROM || process.env.SMTP_USER,
+      from: process.env.MAIL_FROM || (await getSecret("SMTP_USER")),
       to: email,
       subject: "Astro Consultancy — booking request received",
       text: `Hi ${name},\n\nThank you for requesting an astrology consultation. We have received your booking request.\n\nService: ${service}\nRequested time: ${dateTime}\n\nThe consultation details will be confirmed separately.\n\nAstro Consultancy`
@@ -92,7 +134,7 @@ app.post("/api/bookings", async (req, res) => {
       message: "Booking request sent. A confirmation email has been sent to you."
     });
   } catch (error) {
-    console.error("Booking email failed:", error);
+    console.error("Booking email failed:", error.message);
     return res.status(500).json({
       message: "We could not send the booking email. Please try again later."
     });
