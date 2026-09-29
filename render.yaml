@@ -22,6 +22,6 @@ services:
       - key: INFISICAL_ENVIRONMENT
         value: prod
       - key: INFISICAL_SECRET_PATH
-        value: /
-      - key: MAIL_FROM
-        value: iaastrophilee@gmail.com
+        value: /astro-email
+      - key: RESEND_FROM
+        value: onboarding@resend.dev
