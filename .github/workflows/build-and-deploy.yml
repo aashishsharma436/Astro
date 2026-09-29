@@ -25,21 +25,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate site
-        run: |
-          test -f index.html
-          test -f styles.css
-          test -f app.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
 
-      - name: Build site
-        run: |
-          mkdir -p _site
-          cp index.html styles.css app.js README.md _site/
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build React app
+        run: npm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: dist
 
       - name: Deploy to GitHub Pages
         id: deployment
