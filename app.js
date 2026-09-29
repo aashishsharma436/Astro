@@ -115,9 +115,8 @@ bookBtn.addEventListener("click",()=>{
     birth?`Birth details: ${birth}`:null,
     question?`Question/topic: ${question}`:null
   ].filter(Boolean).join("\n");
-  // Replace this number with the astrologer's WhatsApp number.
-  const whatsappNumber="919999999999";
-  window.open(`https://wa.me/${whatsappNumber}?text=${encodeURIComponent(text)}`,"_blank","noopener");
+  const whatsappNumber="917347879744";
+  window.open(`https://wa.me/${whatsappNumber}?${"text"}=${encodeURIComponent(text)}`,"_blank","noopener");
   message.textContent="Your booking request has been prepared. Complete the WhatsApp message to confirm the appointment.";
 });
 
