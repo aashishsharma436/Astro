@@ -1,70 +1,93 @@
 # Astro Consultancy Website
 
-A responsive React/Vite astrology consultancy website with:
+A responsive React/Vite astrology consultancy website with a Node.js booking API.
 
-- Consultation service cards
-- Schedule-based date/time selection
-- Booking details form
-- Node.js/Express booking API
-- SMTP email notifications
-- Automatic customer acknowledgement email
-- Integrated YouTube video
-- Mobile responsive design
+## Secure booking email flow
 
-## Booking email flow
+The website does **not** use EmailJS and does not contain the SMTP password.
 
-The website does **not** use EmailJS.
-
-When a visitor submits a booking:
-
-1. The React frontend sends the booking details to the Node.js API.
-2. The API sends the booking details to **iaastrophilee@gmail.com**.
-3. The API sends an acknowledgement email to the customer's submitted email address.
-
-The backend uses SMTP through Nodemailer. Gmail SMTP is preconfigured as the example.
-
-## Backend setup
-
-The backend lives in `server/`.
-
-Install and run locally:
-
-```bash
-cd server
-npm install
-cp .env.example .env
-npm start
+```
+Browser
+  ↓ booking details
+React / GitHub Pages
+  ↓ HTTPS
+Node.js / Express backend
+  ↓ server-only authentication
+Infisical
+  ↓ SMTP secrets
+Gmail SMTP
+  ├──→ iaastrophilee@gmail.com
+  └──→ customer confirmation email
 ```
 
-Set the SMTP values in `server/.env`. For Gmail, use a Google App Password rather than your normal Gmail password.
+The React frontend never receives, stores, or requests the SMTP password. Infisical is accessed only by the backend using a scoped machine identity. Infisical machine identities are designed for workloads and can be restricted to the required project/environment/path. citeturn0search0turn0search4
 
-The API health endpoint is:
+## Infisical setup
+
+Create an Infisical project and a production environment. Store these secrets in the backend's allowed secret path:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_SECURE`
+- `SMTP_USER`
+- `SMTP_PASS`
+
+Create a dedicated **Machine Identity** for this backend and give it only read access to those secrets. Infisical's Universal Auth exchanges the machine identity's client ID and client secret for a short-lived access token; those credentials must remain backend-only. citeturn0search0
+
+For Gmail SMTP, use a **Google App Password**, not your normal Google account password.
+
+## Backend environment
+
+The backend needs these environment variables:
+
+```
+INFISICAL_SITE_URL=https://app.infisical.com
+INFISICAL_CLIENT_ID=...
+INFISICAL_CLIENT_SECRET=...
+INFISICAL_PROJECT_ID=...
+INFISICAL_ENVIRONMENT=prod
+INFISICAL_SECRET_PATH=/
+FRONTEND_ORIGIN=https://aashishsharma436.github.io
+CONSULTANT_EMAIL=iaastrophilee@gmail.com
+```
+
+These are backend environment variables. **Do not put them in `src/`, do not expose them through Vite, and do not commit their values to GitHub.**
+
+## Render deployment
+
+The repository includes `render.yaml` for the Node.js backend.
+
+After creating the Render service, configure:
+
+- `INFISICAL_CLIENT_ID`
+- `INFISICAL_CLIENT_SECRET`
+- `INFISICAL_PROJECT_ID`
+
+in Render's backend environment settings.
+
+The frontend separately needs the GitHub repository secret:
+
+- `VITE_API_URL` = the public URL of the deployed backend
+
+The browser only receives that public API URL. It does **not** receive the Infisical credentials or SMTP secrets.
+
+## Booking API
+
+Health check:
 
 ```
 GET /health
 ```
 
-The booking endpoint is:
+Booking endpoint:
 
 ```
 POST /api/bookings
 ```
 
-## Deploy the backend
+The API validates the submitted booking details, retrieves SMTP configuration server-side, sends the booking to `iaastrophilee@gmail.com`, and sends an acknowledgement to the customer's email.
 
-`render.yaml` is included for a Render deployment.
-
-After deploying the API, copy its public URL and configure the GitHub repository secret:
-
-- `VITE_API_URL` = your deployed backend URL
-
-Then the existing GitHub Pages workflow builds the React frontend with that API URL.
-
-The backend's `FRONTEND_ORIGIN` environment variable should be:
-
-```
-https://aashishsharma436.github.io
-```
+Error responses never include secret values, and the backend logs only the error message rather than the SMTP configuration.
 
 ## Configure availability
 
@@ -76,6 +99,6 @@ Edit the `SCHEDULE` object in `src/App.jsx`:
 - `blockedDates`: dates that should not be bookable
 - `bookedSlots`: already reserved slots
 
-For a production booking system, the next step is moving availability/booked slots into the backend database so two visitors cannot reserve the same slot.
+For production-grade double-booking protection, the next step is moving availability and reservations into the backend database.
 
 The YouTube video currently integrated is video ID `Q-ELW8tuDgM`.
