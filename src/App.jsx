@@ -13,9 +13,9 @@ const SCHEDULE = {
 const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 const SERVICES = [
-  { name: "Personal Consultation", duration: 60, price: "₹1,500", icon: "☾", description: "Discuss your most important questions with a focused reading based on your birth details." },
-  { name: "Detailed Chart Reading", duration: 90, price: "₹2,000", icon: "✦", description: "A longer session for a broader look at your chart, themes, timing and specific concerns." },
-  { name: "Quick Guidance", duration: 30, price: "₹900", icon: "◌", description: "A concise session for one or two focused questions when you need a shorter consultation." }
+  { name: "Personal Consultation", duration: 60, price: "₹500", icon: "☾", description: "Discuss your most important questions with a focused reading based on your birth details." },
+  { name: "Detailed Chart Reading", duration: 90, price: "₹800", icon: "✦", description: "A longer session for a broader look at your chart, themes, timing and specific concerns." },
+  { name: "Quick Guidance", duration: 30, price: "₹300", icon: "◌", description: "A concise session for one or two focused questions when you need a shorter consultation." }
 ];
 
 const pad = n => String(n).padStart(2, "0");
