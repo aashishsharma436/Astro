@@ -22,6 +22,6 @@ services:
       - key: INFISICAL_ENVIRONMENT
         value: prod
       - key: INFISICAL_SECRET_PATH
-        value: /astro-email
+        value: /astro-emailastro-email
       - key: RESEND_FROM
         value: onboarding@resend.dev
