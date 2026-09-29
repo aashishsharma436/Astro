@@ -94,7 +94,7 @@ app.post("/api/bookings", async (req, res) => {
     });
   }
 
-  const emailPattern = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailPattern.test(email)) {
     return res.status(400).json({ message: "Please enter a valid email address." });
   }
@@ -112,7 +112,7 @@ app.post("/api/bookings", async (req, res) => {
       `Appointment: ${dateTime}`,
       `Birth details: ${birthDetails || "Not provided"}`,
       `Question: ${question || "Not provided"}`
-    ].join("\\n");
+    ].join("\n");
 
     console.log(`Sending booking email for ${email}...`);
 
