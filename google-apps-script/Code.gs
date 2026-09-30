@@ -13,17 +13,21 @@
  */
 
 const TOKEN_PROPERTY = "WEBHOOK_TOKEN";
+const ADMIN_TOKEN_PROPERTY = "ADMIN_TOKEN";
 const CALENDAR_ID = "primary";
 const TIMEZONE = "Asia/Kolkata";
-const START_HOUR = 10;
-const END_HOUR = 19;
-const SLOT_MINUTES = 30;
-const WORKING_DAYS = [1, 2, 3, 4, 5, 6]; // Monday-Saturday
-
-const SERVICE_DURATIONS = {
-  "Quick Guidance": 30,
-  "Personal Consultation": 60,
-  "Detailed Chart Reading": 90
+const DEFAULT_CONFIG = {
+  slotMinutes: 30,
+  weeklySchedule: {
+    "0": [], "1": [["10:00", "17:00"]], "2": [["10:00", "17:00"]],
+    "3": [["10:00", "17:00"]], "4": [["10:00", "17:00"]],
+    "5": [["10:00", "17:00"]], "6": [["10:00", "17:00"]]
+  },
+  services: [
+    { name: "Quick Guidance", duration: 30, price: 300 },
+    { name: "Personal Consultation", duration: 60, price: 500 },
+    { name: "Detailed Chart Reading", duration: 90, price: 800 }
+  ]
 };
 
 function doGet() {
@@ -54,6 +58,14 @@ function doPost(e) {
       return jsonResponse_(getAvailability_(body.date, Number(body.duration)));
     }
 
+    if (action === "adminGetConfig") {
+      return handleAdminGetConfig_(body);
+    }
+
+    if (action === "adminSaveConfig") {
+      return handleAdminSaveConfig_(body);
+    }
+
     if (action !== "booking") {
       return jsonResponse_({ ok: false, message: "Unsupported action." });
     }
@@ -73,32 +85,38 @@ function getAvailability_(dateString, duration) {
     return { ok: false, message: "Invalid date." };
   }
 
-  if (!SERVICE_DURATIONS || duration < 1) {
+  const config = getConfig_();
+  if (duration < 1 || !config.services.some(service => Number(service.duration) === duration)) {
     return { ok: false, message: "Invalid consultation duration." };
   }
 
   const date = parseDate_(dateString, "00:00");
   const day = date.getDay();
 
-  if (!WORKING_DAYS.includes(day)) {
+  const windows = config.weeklySchedule[String(day)] || [];
+  if (!windows.length) {
     return { ok: true, date: dateString, available: [] };
   }
 
   const events = getCalendarEventsForDate_(date);
-
   const available = [];
 
-  for (let mins = START_HOUR * 60; mins + duration <= END_HOUR * 60; mins += SLOT_MINUTES) {
-    const start = minutesToDate_(date, mins);
-    const end = new Date(start.getTime() + duration * 60000);
+  windows.forEach(window => {
+    const startMinutes = toMinutes_(window[0]);
+    const endMinutes = toMinutes_(window[1]);
 
-    if (!hasOverlap_(events, start, end)) {
-      available.push({
-        key: formatDate_(start) + "T" + formatTime_(start),
-        label: formatTimeLabel_(start)
-      });
+    for (let mins = startMinutes; mins + duration <= endMinutes; mins += config.slotMinutes) {
+      const start = minutesToDate_(date, mins);
+      const end = new Date(start.getTime() + duration * 60000);
+
+      if (!hasOverlap_(events, start, end)) {
+        available.push({
+          key: formatDate_(start) + "T" + formatTime_(start),
+          label: formatTimeLabel_(start)
+        });
+      }
     }
-  }
+  });
 
   return {
     ok: true,
@@ -128,7 +146,9 @@ function handleBooking_(body) {
   const birthDetails = String(booking.birthDetails || "Not provided").trim();
   const question = String(booking.question || "Not provided").trim();
 
-  if (!SERVICE_DURATIONS[service] || duration !== SERVICE_DURATIONS[service]) {
+  const config = getConfig_();
+  const serviceConfig = config.services.find(item => item.name === service);
+  if (!serviceConfig || duration !== Number(serviceConfig.duration)) {
     return jsonResponse_({
       ok: false,
       code: "INVALID_SERVICE",
@@ -246,6 +266,102 @@ function sendBookingEmails_(booking) {
       replyTo: booking.consultantEmail
     }
   );
+}
+
+function getConfig_() {
+  const raw = PropertiesService.getScriptProperties().getProperty("BOOKING_CONFIG");
+  if (!raw) return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      slotMinutes: Number(parsed.slotMinutes) || DEFAULT_CONFIG.slotMinutes,
+      weeklySchedule: parsed.weeklySchedule || DEFAULT_CONFIG.weeklySchedule,
+      services: Array.isArray(parsed.services) && parsed.services.length
+        ? parsed.services
+        : DEFAULT_CONFIG.services
+    };
+  } catch (error) {
+    return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  }
+}
+
+function isAdmin_(token) {
+  const expected = PropertiesService.getScriptProperties().getProperty(ADMIN_TOKEN_PROPERTY);
+  return Boolean(expected && token && token === expected);
+}
+
+function handleAdminGetConfig_(body) {
+  if (!isAdmin_(body.adminToken)) {
+    return jsonResponse_({ ok: false, message: "Unauthorized admin access." });
+  }
+  return jsonResponse_({ ok: true, config: getConfig_() });
+}
+
+function handleAdminSaveConfig_(body) {
+  if (!isAdmin_(body.adminToken)) {
+    return jsonResponse_({ ok: false, message: "Unauthorized admin access." });
+  }
+
+  const config = body.config || {};
+  const normalized = validateConfig_(config);
+
+  PropertiesService.getScriptProperties()
+    .setProperty("BOOKING_CONFIG", JSON.stringify(normalized));
+
+  return jsonResponse_({
+    ok: true,
+    message: "Booking settings saved.",
+    config: normalized
+  });
+}
+
+function validateConfig_(config) {
+  const slotMinutes = Number(config.slotMinutes);
+  if (![15, 30, 60].includes(slotMinutes)) {
+    throw new Error("Slot interval must be 15, 30 or 60 minutes.");
+  }
+
+  const weeklySchedule = {};
+  for (let day = 0; day <= 6; day++) {
+    const windows = Array.isArray(config.weeklySchedule && config.weeklySchedule[String(day)])
+      ? config.weeklySchedule[String(day)]
+      : [];
+
+    weeklySchedule[String(day)] = windows.map(window => {
+      if (!Array.isArray(window) || window.length !== 2) throw new Error("Invalid schedule window.");
+      const start = String(window[0]);
+      const end = String(window[1]);
+      if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(start) ||
+          !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(end) ||
+          toMinutes_(start) >= toMinutes_(end)) {
+        throw new Error("Invalid schedule time window.");
+      }
+      return [start, end];
+    });
+  }
+
+  const services = Array.isArray(config.services) ? config.services : [];
+  if (!services.length) throw new Error("At least one service is required.");
+
+  return {
+    slotMinutes,
+    weeklySchedule,
+    services: services.map(item => {
+      const name = String(item.name || "").trim();
+      const duration = Number(item.duration);
+      const price = Number(item.price);
+      if (!name || ![15, 30, 45, 60, 90, 120].includes(duration) || !Number.isFinite(price) || price < 0) {
+        throw new Error("Invalid service configuration.");
+      }
+      return { name, duration, price };
+    })
+  };
+}
+
+function toMinutes_(value) {
+  const parts = String(value).split(":").map(Number);
+  return parts[0] * 60 + parts[1];
 }
 
 function getCalendarEventsForDate_(date) {
