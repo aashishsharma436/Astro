@@ -8,9 +8,7 @@ const port = Number(process.env.PORT || 4000);
 const consultantEmail = process.env.CONSULTANT_EMAIL || "iaastrophilee@gmail.com";
 
 const allowedOrigins = (process.env.FRONTEND_ORIGIN || "")
-  .split(",")
-  .map(origin => origin.trim())
-  .filter(Boolean);
+  .split(",").map(origin => origin.trim()).filter(Boolean);
 
 app.use(cors({
   origin(origin, callback) {
@@ -20,25 +18,18 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "50kb" }));
 
-let mailGateway;
+let gateway;
 
-async function loadMailGatewayConfig() {
+async function loadGatewayConfig() {
   for (const name of ["INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "INFISICAL_PROJECT_ID"]) {
     if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
   }
 
-  const client = new InfisicalSDK({
-    siteUrl: process.env.INFISICAL_SITE_URL || "https://app.infisical.com"
-  });
-
-  console.log("Authenticating with Infisical...");
-
+  const client = new InfisicalSDK({ siteUrl: process.env.INFISICAL_SITE_URL || "https://app.infisical.com" });
   await client.auth().universalAuth.login({
     clientId: process.env.INFISICAL_CLIENT_ID,
     clientSecret: process.env.INFISICAL_CLIENT_SECRET
   });
-
-  console.log("Infisical authentication successful.");
 
   const result = await client.secrets().listSecrets({
     environment: process.env.INFISICAL_ENVIRONMENT || "prod",
@@ -48,57 +39,35 @@ async function loadMailGatewayConfig() {
     recursive: false
   });
 
-  const values = Object.fromEntries(
-    (result?.secrets || []).map(secret => [
-      secret.secretKey || secret.key,
-      secret.secretValue
-    ])
-  );
+  const values = Object.fromEntries((result?.secrets || []).map(secret => [
+    secret.secretKey || secret.key, secret.secretValue
+  ]));
 
-  const missing = ["GOOGLE_APPS_SCRIPT_URL", "GOOGLE_APPS_SCRIPT_TOKEN"]
-    .filter(name => !values[name]);
+  const missing = ["GOOGLE_APPS_SCRIPT_URL", "GOOGLE_APPS_SCRIPT_TOKEN"].filter(name => !values[name]);
+  if (missing.length) throw new Error(`Missing Infisical secrets: ${missing.join(", ")}`);
 
-  if (missing.length) {
-    throw new Error(`Missing Infisical secrets: ${missing.join(", ")}`);
-  }
-
-  mailGateway = {
-    url: values.GOOGLE_APPS_SCRIPT_URL,
-    token: values.GOOGLE_APPS_SCRIPT_TOKEN
-  };
-
-  console.log("Google Apps Script mail gateway configured.");
+  gateway = { url: values.GOOGLE_APPS_SCRIPT_URL, token: values.GOOGLE_APPS_SCRIPT_TOKEN };
 }
 
-async function sendBookingEmails(booking) {
-  if (!mailGateway) throw new Error("Google Apps Script mail gateway is not configured.");
+async function callGateway(action, payload = {}) {
+  if (!gateway) throw new Error("Google Apps Script gateway is not configured.");
 
-  const response = await fetch(mailGateway.url, {
+  const response = await fetch(gateway.url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      token: mailGateway.token,
-      action: "booking",
-      consultantEmail,
-      booking
-    })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: gateway.token, action, ...payload })
   });
 
   const text = await response.text();
   let data;
-
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`Mail gateway returned HTTP ${response.status} with an invalid response.`);
-  }
+  try { data = JSON.parse(text); }
+  catch { throw new Error(`Gateway returned HTTP ${response.status} with an invalid response.`); }
 
   if (!response.ok || !data.ok) {
-    throw new Error(data.message || `Mail gateway returned HTTP ${response.status}.`);
+    const error = new Error(data.message || `Gateway returned HTTP ${response.status}.`);
+    error.code = data.code;
+    throw error;
   }
-
   return data;
 }
 
@@ -106,54 +75,100 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "astro-consultancy-api",
-    emailConfigured: Boolean(mailGateway),
-    emailProvider: "google-apps-script-gmail"
+    emailConfigured: Boolean(gateway),
+    provider: "google-apps-script-gmail-calendar"
   });
 });
 
-app.post("/api/bookings", async (req, res) => {
-  const { name, phone, email, service, dateTime, birthDetails, question } = req.body || {};
+app.get("/api/availability", async (req, res) => {
+  const date = String(req.query.date || "");
+  const duration = Number(req.query.duration);
 
-  if (!name || !phone || !email || !service || !dateTime) {
-    return res.status(400).json({
-      message: "Name, phone, email, service and appointment time are required."
-    });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isInteger(duration)) {
+    return res.status(400).json({ message: "Date and duration are required." });
   }
 
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailPattern.test(email)) {
+  try {
+    const data = await callGateway("availability", { date, duration });
+    return res.json(data);
+  } catch (error) {
+    console.error("Availability failed:", error.message);
+    return res.status(502).json({ message: "We could not load live availability. Please try again." });
+  }
+});
+
+app.post("/api/settings/read", async (req, res) => {
+  const adminToken = String(req.body?.adminToken || "");
+  if (!adminToken) return res.status(400).json({ message: "Admin password is required." });
+
+  try {
+    return res.json(await callGateway("adminGetConfig", { adminToken }));
+  } catch (error) {
+    console.error("Settings read failed:", error.message);
+    return res.status(401).json({ message: "Invalid admin password or settings unavailable." });
+  }
+});
+
+app.post("/api/settings", async (req, res) => {
+  const adminToken = String(req.body?.adminToken || "");
+  const config = req.body?.config;
+
+  if (!adminToken || !config) {
+    return res.status(400).json({ message: "Admin password and configuration are required." });
+  }
+
+  try {
+    return res.json(await callGateway("adminSaveConfig", { adminToken, config }));
+  } catch (error) {
+    console.error("Settings save failed:", error.message);
+    return res.status(401).json({ message: error.message || "Could not save booking settings." });
+  }
+});
+
+app.post("/api/bookings", async (req, res) => {
+  const { name, phone, email, service, duration, dateTime, birthDetails, question } = req.body || {};
+
+  if (!name || !phone || !email || !service || !duration || !dateTime) {
+    return res.status(400).json({ message: "Name, phone, email, service, duration and appointment time are required." });
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ message: "Please enter a valid email address." });
   }
 
   try {
-    console.log(`Sending booking email for ${email}...`);
+    const normalizedDateTime = /[+-]\d{2}:\d{2}$/.test(dateTime)
+      ? dateTime
+      : `${dateTime}:00+05:30`;
 
-    await sendBookingEmails({
-      name,
-      phone,
-      email,
-      service,
-      dateTime,
-      birthDetails: birthDetails || "Not provided",
-      question: question || "Not provided"
+    const data = await callGateway("booking", {
+      consultantEmail,
+      booking: {
+        name, phone, email, service,
+        duration: Number(duration),
+        dateTime: normalizedDateTime,
+        birthDetails: birthDetails || "Not provided",
+        question: question || "Not provided"
+      }
     });
 
-    console.log(`Booking emails sent successfully for ${email}.`);
-
-    return res.status(201).json({
-      ok: true,
-      message: "Booking request sent. A confirmation email has been sent to you."
-    });
+    return res.status(201).json(data);
   } catch (error) {
-    console.error("Booking email failed:", error.message);
-    return res.status(500).json({
-      message: "We could not send the booking email. Please try again later."
-    });
+    console.error("Booking failed:", error.message);
+
+    if (error.code === "SLOT_UNAVAILABLE") {
+      return res.status(409).json({
+        code: "SLOT_UNAVAILABLE",
+        message: "That slot was just booked. Please choose another available time."
+      });
+    }
+
+    return res.status(500).json({ message: "We could not confirm the booking. Please try again later." });
   }
 });
 
 try {
-  await loadMailGatewayConfig();
+  await loadGatewayConfig();
   app.listen(port, () => console.log(`Astro Consultancy API listening on port ${port}`));
 } catch (error) {
   console.error("Startup configuration failed:", error.message);
